@@ -52,9 +52,10 @@ async def async_setup_entry(
     zones = config_entry.options.get(const.CONF_ZONES, [])
     max_setpoint = config_entry.options.get(const.CONF_MAX_SETPOINT)
     controller_delay_time = config_entry.options.get(const.CONF_CONTROLLER_DELAY_TIME, const.DEFAULT_CONTROLLER_DELAY_TIME)
+    absolute_mode = config_entry.options.get(const.CONF_ABSOLUTE_MODE, const.DEFAULT_ABSOLUTE_MODE)
 
     async_add_entities([
-        ZonedHeaterSwitch(hass, controller, zones, max_setpoint, controller_delay_time)
+        ZonedHeaterSwitch(hass, controller, zones, max_setpoint, controller_delay_time, absolute_mode)
     ])
 
 
@@ -62,12 +63,13 @@ class ZonedHeaterSwitch(ToggleEntity, RestoreEntity):
 
     _attr_name = "Zoned Heating"
 
-    def __init__(self, hass, controller_entity, zone_entities, max_setpoint, controller_delay_time):
+    def __init__(self, hass, controller_entity, zone_entities, max_setpoint, controller_delay_time, absolute_mode):
         self.hass = hass
         self._controller_entity = controller_entity
         self._zone_entities = zone_entities
         self._max_setpoint = max_setpoint
         self._controller_delay_time = controller_delay_time
+        self._absolute_mode = absolute_mode
 
         self._enabled = None
         self._state_listeners = []
@@ -113,6 +115,7 @@ class ZonedHeaterSwitch(ToggleEntity, RestoreEntity):
             const.CONF_ZONES: self._zone_entities,
             const.CONF_MAX_SETPOINT: self._max_setpoint,
             const.CONF_CONTROLLER_DELAY_TIME: self._controller_delay_time,
+            const.CONF_ABSOLUTE_MODE : self._absolute_mode,
             const.ATTR_OVERRIDE_ACTIVE: self._override_active,
             const.ATTR_TEMPERATURE_INCREASE: self._temperature_increase,
             const.ATTR_STORED_CONTROLLER_STATE: self._stored_controller_state,
@@ -185,6 +188,10 @@ class ZonedHeaterSwitch(ToggleEntity, RestoreEntity):
         old_state = parse_state(event.data["old_state"])
         new_state = parse_state(event.data["new_state"])
 
+        _LOGGER.debug("Zone entity {} changed from {} to setpoint={}".format(entity,old_state[ATTR_TEMPERATURE], new_state[ATTR_TEMPERATURE]))
+        _LOGGER.debug("Action changed from {} to {}".format(old_state[ATTR_HVAC_ACTION], new_state[ATTR_HVAC_ACTION]))
+        _LOGGER.debug("Action changed from {} to {}".format(old_state[ATTR_HVAC_MODE], new_state[ATTR_HVAC_MODE]))
+
         if (
             old_state[ATTR_TEMPERATURE] != new_state[ATTR_TEMPERATURE] and
             isinstance(new_state[ATTR_TEMPERATURE], float) and
@@ -194,12 +201,65 @@ class ZonedHeaterSwitch(ToggleEntity, RestoreEntity):
             _LOGGER.debug("Zone {} updated: setpoint={}".format(entity, new_state[ATTR_TEMPERATURE]))
             await self.async_calculate_override()
 
-        if old_state[ATTR_HVAC_ACTION] != new_state[ATTR_HVAC_ACTION]:
+        if old_state[ATTR_HVAC_ACTION] != new_state[ATTR_HVAC_ACTION] or old_state[ATTR_HVAC_MODE] != new_state[ATTR_HVAC_MODE] :
             # action of a zone was updated, check whether controller needs to be updated
             _LOGGER.debug("Zone {} updated: action={}".format(entity, new_state[ATTR_HVAC_ACTION]))
             await self.async_calculate_override()
 
     async def async_calculate_override(self):
+
+        if self._absolute_mode:
+            await self.async_calculate_override_absoulte()
+        else:
+            await self.async_calculate_override_offset()
+
+    async def async_calculate_override_absoulte(self):
+            """calculate whether override should be active and determine setpoint"""
+            states = [
+                parse_state(self.hass.states.get(entity))
+                for entity in self._zone_entities
+            ]
+
+            temperature_increase = 0.0
+            set_temp= 0.0
+            override_active = False
+
+            for state in states: 
+                if (
+                    state[ATTR_HVAC_ACTION] == HVACAction.HEATING and
+                    not state[ATTR_HVAC_MODE] == HVACAction.OFF and
+                    state[ATTR_TEMPERATURE] > state[ATTR_CURRENT_TEMPERATURE] and
+                    state[ATTR_TEMPERATURE] - state[ATTR_CURRENT_TEMPERATURE] > temperature_increase
+                    ):
+                    temperature_increase = state[ATTR_TEMPERATURE] - state[ATTR_CURRENT_TEMPERATURE]
+                    set_temp = state[ATTR_TEMPERATURE]
+            
+            override_active = temperature_increase > 0
+            _LOGGER.debug(
+                "Absolute temp debug ={}, override_active={}, new set_temp={}"
+                .format(temperature_increase, override_active, set_temp)
+            )
+            if (not self._override_active and not override_active) or (
+                self._temperature_increase == temperature_increase and
+                override_active == self._override_active
+            ):
+                # nothing to do
+                return
+
+            _LOGGER.debug(
+                "Updated override temperature_increase={}, override_active={}, new set_temp={}"
+                .format(temperature_increase, override_active, set_temp)
+            )
+
+            if override_active and not self._override_active:
+                await self.async_start_override_mode(set_temp)
+            elif not override_active and self._override_active:
+                await self.async_stop_override_mode()
+            else:
+                await self.async_update_override_setpoint(set_temp)
+
+
+    async def async_calculate_override_offset(self):
         """calculate whether override should be active and determine setpoint"""
         states = [
             parse_state(self.hass.states.get(entity))
@@ -209,9 +269,9 @@ class ZonedHeaterSwitch(ToggleEntity, RestoreEntity):
         temperature_increase_per_state = [
             state[ATTR_TEMPERATURE] - state[ATTR_CURRENT_TEMPERATURE]
             for state in states
-            if state[ATTR_HVAC_ACTION] == HVACAction.HEATING
+            if state[ATTR_HVAC_ACTION] == HVACAction.HEATING and state[ATTR_HVAC_MODE] != HVACAction.OFF
         ]
-
+        
         override_active = False
         temperature_increase = 0
 
@@ -288,6 +348,44 @@ class ZonedHeaterSwitch(ToggleEntity, RestoreEntity):
         self._stored_controller_state = None
 
     async def async_update_override_setpoint(self, temperature_increase: float):
+        
+        if self._absolute_mode:
+            await self.async_update_override_setpoint_absolute(temperature_increase)
+        else: 
+            await self.async_update_override_setpoint_offset(temperature_increase)
+
+    async def async_update_override_setpoint_absolute(self, new_set_temp: float):
+        """Update the override setpoint of the controller"""
+
+        self._temperature_increase = new_set_temp
+
+        controller_setpoint = 0
+        if (
+            self._stored_controller_state == HVACMode.HEAT and
+            isinstance(self._stored_controller_setpoint, float)
+         ):
+            controller_setpoint = self._stored_controller_setpoint
+
+        controller_state = self.hass.states.get(self._controller_entity)
+        current_state = parse_state(controller_state)
+
+        new_setpoint = max([new_set_temp, controller_setpoint])
+
+        _LOGGER.debug("Updating override setpoint for absolute mode set_temp={}, current_temp={}".format(new_setpoint, current_state[ATTR_TEMPERATURE]))
+
+        if (
+            new_setpoint != current_state[ATTR_TEMPERATURE] and
+            compute_domain(self._controller_entity) == Platform.CLIMATE
+        ):
+            setpoint_resolution = controller_state.attributes.get(ATTR_TARGET_TEMP_STEP, 0.5)
+            new_setpoint = round(new_setpoint / setpoint_resolution) * setpoint_resolution
+            _LOGGER.debug("Updating override setpoint={}".format(new_setpoint))
+            await self._ignore_controller_state_changes()
+            await async_set_temperature(self.hass, self._controller_entity, new_setpoint)
+
+
+
+    async def async_update_override_setpoint_offset(self, temperature_increase: float):
         """Update the override setpoint of the controller"""
 
         self._temperature_increase = temperature_increase
@@ -322,6 +420,7 @@ class ZonedHeaterSwitch(ToggleEntity, RestoreEntity):
             _LOGGER.debug("Updating override setpoint={}".format(new_setpoint))
             await self._ignore_controller_state_changes()
             await async_set_temperature(self.hass, self._controller_entity, new_setpoint)
+
 
     @callback
     async def async_turn_off_zones(self):
