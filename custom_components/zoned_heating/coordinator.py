@@ -229,81 +229,19 @@ class ZonedHeatingDataCoordinator(DataUpdateCoordinator):
             )
             await self.async_calculate_override()
 
-    async def async_calculate_override(self):  # TODO: Update temp to thermostat
-        _LOGGER.debug("async_calculate_override")
-        if self.data.absolute_mode:
-            await self.async_calculate_override_absoulte()
-        else:
-            await self.async_calculate_override_offset()
-
-    async def async_calculate_override_absoulte(self):
+    async def async_calculate_override(self):
         """calculate whether override should be active and determine setpoint"""
-        states = [
-            parse_state(self.hass.states.get(entity), entity)
-            for entity in self.data.zone_entities
-        ]
-
-        for entity in self.data.zone_entities:
-            _LOGGER.debug(entity)
-
-        for state in states:
-            _LOGGER.debug(state)
+        
+        zone_id = None
         temperature_increase = 0.0
         set_temp = 0.0
         override_active = False
         zone_id = 0
 
-        for state in states:
-            if (
-                state[ATTR_HVAC_ACTION] == HVACAction.HEATING
-                and not state[ATTR_HVAC_MODE] == HVACAction.OFF
-                and state[ATTR_TEMPERATURE] > state[ATTR_CURRENT_TEMPERATURE]
-                and state[ATTR_TEMPERATURE] - state[ATTR_CURRENT_TEMPERATURE]
-                > temperature_increase
-            ):
-                temperature_increase = (
-                    state[ATTR_TEMPERATURE] - state[ATTR_CURRENT_TEMPERATURE]
-                )
-                set_temp = state[ATTR_TEMPERATURE]
-            # zone_id = state.
-
-        override_active = temperature_increase > 0
-        _LOGGER.debug(
-            "Absolute temp debug ={}, override_active={}, new set_temp={}".format(
-                temperature_increase, override_active, set_temp
-            )
-        )
-        if (not self.data.override_active and not override_active) or (
-            self.data.temperature_increase == temperature_increase
-            and override_active == self.data.override_active
-        ):
-            # nothing to do
-            return
-
-        _LOGGER.debug(
-            "Updated override temperature_increase={}, override_active={}, new set_temp={}".format(
-                temperature_increase, override_active, set_temp
-            )
-        )
-        self.data.current_zone = state[ATTR_ENTITY_ID]
-        if override_active and not self.data.override_active:
-            await self.async_start_override_mode(set_temp)
-        elif not override_active and self.data.override_active:
-            await self.async_stop_override_mode()
-        else:
-            await self.async_update_override_setpoint(set_temp)
-
-    async def async_calculate_override_offset(self):
-        """calculate whether override should be active and determine setpoint"""
-
-        zone_id = None
         states = [
             parse_state(self.hass.states.get(entity), entity)
             for entity in self.data.zone_entities
         ]
-
-        temperature_increase = 0
-        override_active = False
 
         for index, state in enumerate(states):
             if (
@@ -319,6 +257,16 @@ class ZonedHeatingDataCoordinator(DataUpdateCoordinator):
                 )
                 zone_id = index
                 override_active = True
+                if self.data.absolute_mode:
+                    set_temp = state[ATTR_TEMPERATURE]
+                else:
+                    set_temp= temperature_increase
+
+        _LOGGER.debug(
+            "Absolute temp debug ={}, override_active={}, new set_temp={}".format(
+                temperature_increase, override_active, set_temp
+            )
+        )
 
         if (not self.data.override_active and not override_active) or (
             self.data.temperature_increase == temperature_increase
@@ -327,29 +275,28 @@ class ZonedHeatingDataCoordinator(DataUpdateCoordinator):
             if zone_id is not None:
                 self.data.current_zone = states[zone_id][ATTR_ENTITY_ID]
             self.async_set_updated_data(self.data)
-            # await self._async_update_data()
             return
 
         _LOGGER.debug(
-            "Updated override temperature_increase={}, override_active={}".format(
-                temperature_increase, override_active
+            "Updated override temperature_increase={}, override_active={}, new set_temp={}".format(
+                temperature_increase, override_active, set_temp
             )
         )
         if zone_id is not None:
             self.data.current_zone = states[zone_id][ATTR_ENTITY_ID]
+ 
         if override_active and not self.data.override_active:
-            await self.async_start_override_mode(temperature_increase)
+            await self.async_start_override_mode(set_temp)
         elif not override_active and self.data.override_active:
             await self.async_stop_override_mode()
         else:
-            await self.async_update_override_setpoint(temperature_increase)
+            await self.async_update_override_setpoint(set_temp)
 
         if self._is_initialized:
             self.async_set_updated_data(self.data)
         else:
             self._is_initialized = True
-        await self._async_update_data()  # TODO: LOOP PROBLEM
-        # self.async_write_ha_state()
+        await self._async_update_data()
 
     async def async_start_override_mode(self, temperature_increase: float):
         """Start the override of the controller"""
@@ -422,16 +369,11 @@ class ZonedHeatingDataCoordinator(DataUpdateCoordinator):
         self.data.stored_controller_state = None
         self.data.current_zone = None
 
-    async def async_update_override_setpoint(self, temperature_increase: float):
-        if self.data.absolute_mode:
-            await self.async_update_override_setpoint_absolute(temperature_increase)
-        else:
-            await self.async_update_override_setpoint_offset(temperature_increase)
 
-    async def async_update_override_setpoint_absolute(self, new_set_temp: float):
+    async def async_update_override_setpoint(self, temperature: float):
         """Update the override setpoint of the controller"""
 
-        self.data.temperature_increase = new_set_temp
+        self.data.temperature_increase = temperature
 
         controller_setpoint = 0
         if self.data.stored_controller_state == HVACMode.HEAT and isinstance(
@@ -442,11 +384,25 @@ class ZonedHeatingDataCoordinator(DataUpdateCoordinator):
         controller_state = self.hass.states.get(self.data.controller_entity)
         current_state = parse_state(controller_state)
 
-        new_setpoint = max([new_set_temp, controller_setpoint])
+        override_setpoint = 0
+        new_setpoint = 0
+        
+        if not self.data.absolute_mode and isinstance(current_state[ATTR_CURRENT_TEMPERATURE], float):
+            override_setpoint = min(
+                [
+                    current_state[ATTR_CURRENT_TEMPERATURE] + temperature_increase,
+                    self.data.max_setpoint,
+                ]
+            )
+
+        if self.data.absolute_mode:
+            override_setpoint = temperature
+
+        new_setpoint = max([override_setpoint, controller_setpoint])
 
         _LOGGER.debug(
-            "Updating override setpoint for absolute mode set_temp={}, current_temp={}".format(
-                new_setpoint, current_state[ATTR_TEMPERATURE]
+            "Updating override setpoint for set_temp={}, current_temp={}, mode={}".format(
+                new_setpoint, current_state[ATTR_TEMPERATURE], self.data.absolute_mode
             )
         )
 

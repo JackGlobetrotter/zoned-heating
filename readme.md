@@ -74,3 +74,7 @@ The following limitations are known and possibly addressed in future updates:
 * The integration is only tested for `climate` modes `heat` and `off`. Modes `cool` and `heat_cool` might result in unwanted behaviour.
 * The override logic assumes that your zones can heat up quicker than the controller. If this is not the case, the zones may never reach the desired temperature.
 * This integration does not handle presets for `climate` devices.
+
+
+## TODO
+ * Add window open detection
