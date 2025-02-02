@@ -1,4 +1,5 @@
 """Config flow for the Zoned Heating component."""
+
 import secrets
 import logging
 import voluptuous as vol
@@ -6,10 +7,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
 import homeassistant.helpers.config_validation as cv
-from homeassistant.components.climate import (
-    ATTR_MIN_TEMP,
-    ATTR_MAX_TEMP
-)
+from homeassistant.components.climate import ATTR_MIN_TEMP, ATTR_MAX_TEMP
 from homeassistant.const import Platform
 from . import const
 
@@ -68,10 +66,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         all_climates = [
             climate
             for climate in self.hass.states.async_entity_ids("climate")
-        ]
+            if const.DEFAULT_ENTITY_IDS not in climate
+        ]  # TODO: Exlude own climate entity
         all_switches = [
             switch
             for switch in self.hass.states.async_entity_ids("switch")
+            if const.DEFAULT_ENTITY_IDS not in switch
         ]
         controller_options = sorted(all_climates) + sorted(all_switches)
 
@@ -83,12 +83,11 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             step_id="init",
             data_schema=vol.Schema(
                 {
-                    vol.Required(
-                        const.CONF_CONTROLLER,
-                        default=default
-                    ): vol.In(controller_options)
+                    vol.Required(const.CONF_CONTROLLER, default=default): vol.In(
+                        controller_options
+                    )
                 }
-            )
+            ),
         )
 
     async def async_step_zones(self, user_input=None):
@@ -101,7 +100,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         zone_options = [
             climate
             for climate in self.hass.states.async_entity_ids("climate")
-            if climate != self.controller
+            if climate != self.controller and const.DEFAULT_ENTITY_IDS not in climate
         ]
 
         default = [
@@ -114,15 +113,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             step_id=const.CONF_ZONES,
             data_schema=vol.Schema(
                 {
-                    vol.Required(
-                        const.CONF_ZONES,
-                        default=default
-                    ): vol.All(
+                    vol.Required(const.CONF_ZONES, default=default): vol.All(
                         cv.multi_select(sorted(zone_options)),
                         vol.Length(min=1),
                     ),
                 }
-            )
+            ),
         )
 
     async def async_step_max_setpoint(self, user_input=None):
@@ -141,28 +137,27 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         default = self.config_entry.options.get(const.CONF_MAX_SETPOINT)
         if not default or default < min_temp or default > max_temp:
-            default = round((min_temp + max_temp)/2)
+            default = round((min_temp + max_temp) / 2)
 
         return self.async_show_form(
             step_id=const.CONF_MAX_SETPOINT,
             data_schema=vol.Schema(
                 {
                     vol.Required(
-                        const.CONF_MAX_SETPOINT,
-                        default=const.DEFAULT_MAX_SETPOINT
-                    ): vol.All(
-                        vol.Coerce(int),
-                        vol.Range(min=min_temp, max=max_temp)
-                    )
+                        const.CONF_MAX_SETPOINT, default=const.DEFAULT_MAX_SETPOINT
+                    ): vol.All(vol.Coerce(int), vol.Range(min=min_temp, max=max_temp))
                 }
-            )
+            ),
         )
 
     async def async_step_controller_delay_time(self, user_input=None):
         """Handle options flow."""
 
         if user_input is not None:
-            self.controller_delay_time = user_input.get(const.CONF_CONTROLLER_DELAY_TIME)
+            self.controller_delay_time = user_input.get(
+                const.CONF_CONTROLLER_DELAY_TIME
+            )
+
             return await self.async_step_absolute_mode()
 
         default = self.config_entry.options.get(const.CONF_CONTROLLER_DELAY_TIME)
@@ -174,14 +169,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             data_schema=vol.Schema(
                 {
                     vol.Required(
-                        const.CONF_CONTROLLER_DELAY_TIME,
-                        default=default
-                    ): vol.All(
-                        vol.Coerce(int),
-                        vol.Range(min=10, max=300)
-                    )
+                        const.CONF_CONTROLLER_DELAY_TIME, default=default
+                    ): vol.All(vol.Coerce(int), vol.Range(min=10, max=300))
                 }
-            )
+            ),
         )
 
     async def async_step_absolute_mode(self, user_input=None):
@@ -190,13 +181,16 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             self.absolute_mode = user_input.get(const.CONF_ABSOLUTE_MODE)
 
-            return self.async_create_entry(title="", data={
-                const.CONF_ZONES: self.zones,
-                const.CONF_CONTROLLER: self.controller,
-                const.CONF_MAX_SETPOINT: self.max_setpoint,
-                const.CONF_CONTROLLER_DELAY_TIME: self.controller_delay_time,
-                const.CONF_ABSOLUTE_MODE : self.absolute_mode
-            })
+            return self.async_create_entry(
+                title="",
+                data={
+                    const.CONF_ZONES: self.zones,
+                    const.CONF_CONTROLLER: self.controller,
+                    const.CONF_MAX_SETPOINT: self.max_setpoint,
+                    const.CONF_CONTROLLER_DELAY_TIME: self.controller_delay_time,
+                    const.CONF_ABSOLUTE_MODE: self.absolute_mode,
+                },
+            )
 
         default = self.config_entry.options.get(const.CONF_ABSOLUTE_MODE)
         if not default:
@@ -205,11 +199,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         return self.async_show_form(
             step_id=const.CONF_ABSOLUTE_MODE,
             data_schema=vol.Schema(
-                {
-                    vol.Required(
-                        const.CONF_ABSOLUTE_MODE,
-                        default=default
-                    ): bool
-                }
-            )
+                {vol.Required(const.CONF_ABSOLUTE_MODE, default=default): bool}
+            ),
         )

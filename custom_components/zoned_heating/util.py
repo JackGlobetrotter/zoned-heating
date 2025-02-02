@@ -1,4 +1,3 @@
-
 import logging
 
 from homeassistant.const import (
@@ -12,6 +11,7 @@ from homeassistant.const import (
     SERVICE_TURN_OFF,
     STATE_ON,
     Platform,
+    ATTR_ENTITY_ID,
 )
 from homeassistant.components.climate.const import (
     ATTR_HVAC_MODE,
@@ -29,7 +29,7 @@ from homeassistant.core import (
 _LOGGER = logging.getLogger(__name__)
 
 
-def parse_state(state):
+def parse_state(state, entity_id=None):
     data = {}
 
     for key in [ATTR_TEMPERATURE, ATTR_CURRENT_TEMPERATURE, ATTR_HVAC_ACTION]:
@@ -39,9 +39,9 @@ def parse_state(state):
 
     if data[ATTR_HVAC_ACTION] is None:
         if (
-            data[ATTR_TEMPERATURE] is not None and
-            data[ATTR_CURRENT_TEMPERATURE] is not None and
-            data[ATTR_HVAC_MODE] in [HVACMode.OFF, HVACMode.HEAT]
+            data[ATTR_TEMPERATURE] is not None
+            and data[ATTR_CURRENT_TEMPERATURE] is not None
+            and data[ATTR_HVAC_MODE] in [HVACMode.OFF, HVACMode.HEAT]
         ):
             if data[ATTR_HVAC_MODE] == HVACMode.OFF:
                 data[ATTR_HVAC_ACTION] = HVACAction.OFF
@@ -52,6 +52,8 @@ def parse_state(state):
         else:
             data[ATTR_HVAC_ACTION] = HVACAction.OFF
 
+    data[ATTR_ENTITY_ID] = entity_id
+
     return data
 
 
@@ -60,12 +62,8 @@ async def async_set_hvac_mode(hass: HomeAssistant, entity_ids, hvac_mode: str):
     params = {
         CONF_DOMAIN: Platform.CLIMATE,
         CONF_SERVICE: SERVICE_SET_HVAC_MODE,
-        ATTR_SERVICE_DATA: {
-            ATTR_HVAC_MODE: hvac_mode
-        },
-        CONF_TARGET: {
-            CONF_ENTITY_ID: entity_ids
-        }
+        ATTR_SERVICE_DATA: {ATTR_HVAC_MODE: hvac_mode},
+        CONF_TARGET: {CONF_ENTITY_ID: entity_ids},
     }
     service_task = hass.async_create_task(
         hass.services.async_call(
@@ -82,12 +80,8 @@ async def async_set_temperature(hass: HomeAssistant, entity_ids, temperature: fl
     params = {
         CONF_DOMAIN: Platform.CLIMATE,
         CONF_SERVICE: SERVICE_SET_TEMPERATURE,
-        ATTR_SERVICE_DATA: {
-            ATTR_TEMPERATURE: temperature
-        },
-        CONF_TARGET: {
-            CONF_ENTITY_ID: entity_ids
-        }
+        ATTR_SERVICE_DATA: {ATTR_TEMPERATURE: temperature},
+        CONF_TARGET: {CONF_ENTITY_ID: entity_ids},
     }
     service_task = hass.async_create_task(
         hass.services.async_call(
@@ -104,11 +98,8 @@ async def async_set_switch_state(hass: HomeAssistant, entity_ids, state: str):
     params = {
         CONF_DOMAIN: Platform.SWITCH,
         CONF_SERVICE: SERVICE_TURN_ON if state == STATE_ON else SERVICE_TURN_OFF,
-        ATTR_SERVICE_DATA: {
-        },
-        CONF_TARGET: {
-            CONF_ENTITY_ID: entity_ids
-        }
+        ATTR_SERVICE_DATA: {},
+        CONF_TARGET: {CONF_ENTITY_ID: entity_ids},
     }
     service_task = hass.async_create_task(
         hass.services.async_call(

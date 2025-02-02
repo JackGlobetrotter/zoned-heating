@@ -2,143 +2,184 @@ import logging
 from datetime import datetime, timedelta
 import voluptuous as vol
 
-from homeassistant.components.climate import (ClimateDevice, PLATFORM_SCHEMA, ATTR_TARGET_TEMP_LOW)
-from homeassistant.components.climate.const import (ATTR_TARGET_TEMP_HIGH,
-                                                    CURRENT_HVAC_OFF, CURRENT_HVAC_HEAT, CURRENT_HVAC_COOL,
-                                                    HVAC_MODE_AUTO, HVAC_MODE_OFF, HVAC_MODE_COOL,
-                                                    HVAC_MODE_HEAT, SUPPORT_TARGET_TEMPERATURE,
-                                                    SUPPORT_PRESET_MODE, SUPPORT_TARGET_TEMPERATURE_RANGE)
 
-from homeassistant.const import (CONF_NAME, CONF_USERNAME, CONF_PASSWORD, CONF_ROOM, ATTR_STATE,
-                                 TEMP_CELSIUS, ATTR_TEMPERATURE, TEMP_FAHRENHEIT)
+from custom_components.zoned_heating.switch import DEFAULT_SWITCH_ID
+from homeassistant.components.climate import ClimateEntity, ClimateEntityFeature
+from homeassistant.components.climate.const import (
+    ATTR_CURRENT_TEMPERATURE,
+    ATTR_FAN_MODE,
+    ATTR_HUMIDITY,
+    ATTR_HVAC_ACTION,
+    ATTR_HVAC_MODE,
+    ATTR_PRESET_MODE,
+    ATTR_AUX_HEAT,
+    ATTR_MAX_HUMIDITY,
+    ATTR_SWING_HORIZONTAL_MODE,
+    ATTR_SWING_MODE,
+    SERVICE_SET_AUX_HEAT,
+    SERVICE_SET_FAN_MODE,
+    SERVICE_SET_HUMIDITY,
+    SERVICE_SET_HVAC_MODE,
+    SERVICE_SET_PRESET_MODE,
+    SERVICE_SET_SWING_HORIZONTAL_MODE,
+    SERVICE_SET_SWING_MODE,
+    SERVICE_SET_TEMPERATURE,
+    HVACAction,
+    HVACMode,
+    PRESET_NONE,
+)
+
+from homeassistant.const import (
+    ATTR_FRIENDLY_NAME,
+    ATTR_TEMPERATURE,
+    UnitOfTemperature,
+    ATTR_TEMPERATURE,
+    SERVICE_TOGGLE,
+    SERVICE_TURN_OFF,
+    SERVICE_TURN_ON,
+    UnitOfTemperature,
+)
+
 
 from homeassistant.const import STATE_ON, STATE_OFF
-
+from homeassistant.core import HomeAssistant
 import homeassistant.helpers.config_validation as cv
 
-import requests
+
+from homeassistant import config_entries
+from homeassistant.helpers.entity_component import EntityComponent
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.util.hass_dict import HassKey
+from .const import DOMAIN
+from .base_entity import BaseEntity
+from .coordinator import (
+    ZonedHeatingDataCoordinator,
+    async_set_temperature as utility_cliamte_async_set_temperature,
+)
 
 _LOGGER = logging.getLogger(__name__)
-DEPENDENCIES = ['switch', 'sensor']
-REQUIREMENTS = ['requests']
 
-DEFAULT_NAME = 'Zoned Heating Thermostat (Mirror)'
-DEFAULT_TIMEOUT = 3
+DEPENDENCIES = ["switch", "sensor"]
+REQUIREMENTS = ["requests"]
 
-ATTR_MODE = 'mode'
-STATE_UNKNOWN = 'unknown'
+DEFAULT_NAME = "Zoned Heating Thermostat (Mirror)"
 
-SUPPORT_FLAGS = (SUPPORT_PRESET_MODE | SUPPORT_TARGET_TEMPERATURE_RANGE)
+DATA_COMPONENT: HassKey[EntityComponent[ClimateEntity]] = HassKey(DOMAIN)
+SCAN_INTERVAL = timedelta(seconds=60)
 
-def setup_platform(hass, config, add_devices, discovery_info=None):
 
-    add_devices([Thermostat(DEFAULT_NAME, client)])
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: config_entries.ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up climate device for zoned heating platform."""
+    coordinator: ZonedHeatingDataCoordinator = hass.data[DOMAIN][
+        config_entry.entry_id
+    ].coordinator
 
-class Thermostat(ClimateDevice):
+    async_add_entities([VirtualThermostat(coordinator)])
+
+
+class VirtualThermostat(BaseEntity, ClimateEntity):
     """Representation of a Climate device."""
 
-    HVAC_MODE_LIST = (
-        HVAC_MODE_OFF,
-        HVAC_MODE_HEAT
+    _attr_unique_id = DEFAULT_SWITCH_ID
+    _attr_has_entity_name = True
+    _attr_hvac_modes = [HVACMode.HEAT, HVACMode.OFF]
+    _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_name = None
+    _attr_supported_features = (
+        ClimateEntityFeature.TARGET_TEMPERATURE
+        | ClimateEntityFeature.TURN_OFF
+        | ClimateEntityFeature.TURN_ON
     )
+    _attr_preset_mode = PRESET_NONE
+    _attr_preset_modes = [PRESET_NONE]
+    _attr_current_temperature = 0
+    _attr_target_temperature = 0
+    _attr_hvac_mode = HVACMode.OFF
+    _enable_turn_on_off_backwards_compatibility = False
+    _current_temperature = None
+    _target_temperature = None
+    _current_state = HVACAction.OFF
+    _current_operation = ""
+    _current_unit = 0
+    _heating_state = True
+    _hvac_mode = HVACMode.HEAT
 
-    def __init__(self, name, client):
+    def __init__(self, coordinator) -> None:
         """Initialize the thermostat."""
-        self._name = name
-        self._cl = client
-        self._current_temp = 0
-        self._current_state = self.IDLE
-        self._current_operation = ''
-        self._current_unit = 0
-        self._tempSetMark = 0
-        self._heating_state = False
-        self._hvac_mode = HVAC_MODE_OFF
-        self.update()
 
-    @property
-    def target_temperature(self):
-        """Return the temperature we try to reach."""
-        return self._target_temperature
+        self._name = DEFAULT_NAME
+        super().__init__(coordinator)
 
-    @property
-    def current_temperature(self):
-        return self._current_temperature
+    async def async_added_to_hass(self):
+        await super().async_added_to_hass()
 
-    @property
-    def should_poll(self):
-        """Polling needed for thermostat."""
-        _LOGGER.debug("Should_Poll called")
-        return True
-
-    @property
-    def supported_features(self):
-        """Return the list of supported features."""
-        return SUPPORT_FLAGS
-
-    def get_target_temperature(self):
-        """
-        To get the tartget temperature using the Preset info
-        :return:
-        """
-        return self._target_temperature
+    async def async_will_remove_from_hass(self):
+        await self.coordinator.async_on_remove()
+        return await super().async_will_remove_from_hass()
 
     def update(self):
         """Update the data from the thermostat."""
-        _LOGGER.debug("Update called")
+        if self.coordinator.data.current_zone is not None:
+            trv = self.hass.states.get(self.coordinator.data.current_zone)
+            self._attr_current_temperature = float(
+                trv.attributes.get(ATTR_CURRENT_TEMPERATURE)
+            )
+            self._attr_target_temperature = float(trv.attributes.get(ATTR_TEMPERATURE))
+            self._name = trv.attributes.get(ATTR_FRIENDLY_NAME)
+            self._attr_hvac_action = trv.attributes.get(ATTR_HVAC_ACTION)
+            if (
+                trv.attributes.get(ATTR_HVAC_MODE) is None
+                and trv.attributes.get(ATTR_HVAC_ACTION) == HVACAction.HEATING
+            ):
+                self._attr_hvac_mode = HVACMode.HEAT
+            else:
+                self._attr_hvac_mode = trv.attributes.get(ATTR_HVAC_MODE)
 
+            self._attr_target_temperature_low = float(
+                trv.attributes.get(ATTR_TEMPERATURE)
+            )
+            self._attr_target_temperature_high = float(
+                trv.attributes.get(ATTR_TEMPERATURE)
+            )
+        else:
+            self._attr_target_temperature = None
+            self._attr_current_temperature = None
+            self._name = DEFAULT_NAME
+            self._attr_hvac_action = HVACAction.OFF
+            self._attr_hvac_mode = HVACMode.OFF
+            self._attr_target_temperature = None
+            self._attr_target_temperature_low = None
+            self._attr_target_temperature_high = None
+        _LOGGER.debug("Update called")
+        # self.async_write_ha_state()
 
     @property
     def name(self):
         """Return the name of the thermostat."""
         return self._name
 
-    @property
-    def device_state_attributes(self):
-        """Return the device specific state attributes."""
-        return {
-            ATTR_MODE: self._current_state,
-            'season_mode': self.hvac_mode,
-            'heating_state': self._heating_state
-        }
+    def _handle_coordinator_update(self):
+        self.update()
+        return super()._handle_coordinator_update()
 
-    @property
-    def temperature_unit(self):
-        """Return the unit of measurement."""
-        if self._current_unit == '0':
-            return TEMP_CELSIUS
+    async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
+        """Set new target hvac mode."""
+        if hvac_mode == HVACMode.HEAT and not self.coordinator.data.enabled:
+            await self.coordinator.async_enable_zoned_heating()
+        elif hvac_mode == HVACMode.OFF and self.coordinator.data.enabled:
+            await self.coordinator.async_disable_zoned_heating()
         else:
-            return TEMP_FAHRENHEIT
+            _LOGGER.debug(
+                "HVAC Mode Handling not implemented for {}. Zoned Heating is {}".format(
+                    hvac_mode, self.coordinator.data.enabled
+                )
+            )
 
-    @property
-    def hvac_mode(self):
-        """Current mode."""
-        return self._hvac_mode
-
-    @property
-    def hvac_action(self):
-        """Current mode."""
-        if self._heating_state:
-            mode = self.hvac_mode
-            if mode == HVAC_MODE_HEAT:
-                return CURRENT_HVAC_HEAT
-        else:
-            return CURRENT_HVAC_OFF
-
-    @property
-    def hvac_modes(self):
-        """List of available operation modes."""
-        return self.HVAC_MODE_LIST
-
-    def set_hvac_mode(self, hvac_mode):
-        """Set HVAC mode (COOL, HEAT)."""
-        _LOGGER.debug("set_hvac_mode called, should be disabled")
-
-    def set_preset_mode(self, preset_mode):
-        """Set HVAC mode (comfort, home, sleep, Party, Off)."""
-
-        _LOGGER.debug("set_preset_mode called, should be disabled")
-
-    def set_temperature(self, **kwargs):
-        """Set new target temperature."""
-
-        _LOGGER.debug("set_temperature called, should be disabled")
+    async def async_set_temperature(self, **kwargs):
+        await utility_cliamte_async_set_temperature(
+            self.hass, self.coordinator.data.current_zone, kwargs["temperature"]
+        )

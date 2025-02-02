@@ -16,7 +16,12 @@ DEFAULT_MAX_SETPOINT = 21
 DEFAULT_CONTROLLER_DELAY_TIME = 10
 DEFAULT_ABSOLUTE_MODE = False
 
+DEFAULT_SWITCH_ID = "zoned_heating_internal_switch"
+DEFAULT_CLIMATE_ID = "zoned_heating_internal_climate"
+DEFAULT_ENTITY_IDS = "zoned_heating"
+
 ATTR_OVERRIDE_ACTIVE = "override_active"
 ATTR_TEMPERATURE_INCREASE = "temperature_increase"
 ATTR_STORED_CONTROLLER_STATE = "stored_controller_state"
 ATTR_STORED_CONTROLLER_SETPOINT = "stored_controller_setpoint"
+ATTR_CURRENT_ZONE = "current_zone"
