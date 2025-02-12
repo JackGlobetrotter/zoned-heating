@@ -1,29 +1,16 @@
 import logging
-from datetime import datetime, timedelta
-import voluptuous as vol
+from datetime import timedelta
 
+
+from . import ZonedHeatingConfigEntry
 
 from custom_components.zoned_heating.switch import DEFAULT_SWITCH_ID
 from homeassistant.components.climate import ClimateEntity, ClimateEntityFeature
 from homeassistant.components.climate.const import (
     ATTR_CURRENT_TEMPERATURE,
-    ATTR_FAN_MODE,
-    ATTR_HUMIDITY,
     ATTR_HVAC_ACTION,
     ATTR_HVAC_MODE,
-    ATTR_PRESET_MODE,
-    ATTR_AUX_HEAT,
-    ATTR_MAX_HUMIDITY,
-    ATTR_SWING_HORIZONTAL_MODE,
-    ATTR_SWING_MODE,
-    SERVICE_SET_AUX_HEAT,
-    SERVICE_SET_FAN_MODE,
-    SERVICE_SET_HUMIDITY,
-    SERVICE_SET_HVAC_MODE,
-    SERVICE_SET_PRESET_MODE,
-    SERVICE_SET_SWING_HORIZONTAL_MODE,
-    SERVICE_SET_SWING_MODE,
-    SERVICE_SET_TEMPERATURE,
+    ATTR_TARGET_TEMP_STEP,
     HVACAction,
     HVACMode,
     PRESET_NONE,
@@ -34,19 +21,13 @@ from homeassistant.const import (
     ATTR_TEMPERATURE,
     UnitOfTemperature,
     ATTR_TEMPERATURE,
-    SERVICE_TOGGLE,
-    SERVICE_TURN_OFF,
-    SERVICE_TURN_ON,
     UnitOfTemperature,
 )
 
-
-from homeassistant.const import STATE_ON, STATE_OFF
+from . import const
 from homeassistant.core import HomeAssistant
 import homeassistant.helpers.config_validation as cv
 
-
-from homeassistant import config_entries
 from homeassistant.helpers.entity_component import EntityComponent
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util.hass_dict import HassKey
@@ -70,13 +51,13 @@ SCAN_INTERVAL = timedelta(seconds=60)
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: config_entries.ConfigEntry,
+    config_entry: ZonedHeatingConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up climate device for zoned heating platform."""
-    coordinator: ZonedHeatingDataCoordinator = hass.data[DOMAIN][
-        config_entry.entry_id
-    ].coordinator
+    coordinator: ZonedHeatingDataCoordinator = (
+        config_entry.runtime_data.coordinator
+    )  # hass.data[const.DOMAIN][config_entry.entry_id]
 
     async_add_entities([VirtualThermostat(coordinator)])
 
@@ -84,11 +65,11 @@ async def async_setup_entry(
 class VirtualThermostat(BaseEntity, ClimateEntity):
     """Representation of a Climate device."""
 
+    _attr_name = "Zoned Heating"
     _attr_unique_id = DEFAULT_SWITCH_ID
     _attr_has_entity_name = True
     _attr_hvac_modes = [HVACMode.HEAT, HVACMode.OFF]
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
-    _attr_name = None
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE
         | ClimateEntityFeature.TURN_OFF
@@ -98,6 +79,7 @@ class VirtualThermostat(BaseEntity, ClimateEntity):
     _attr_preset_modes = [PRESET_NONE]
     _attr_current_temperature = 0
     _attr_target_temperature = 0
+    _attr_target_temperature_step = 0
     _attr_hvac_mode = HVACMode.OFF
     _enable_turn_on_off_backwards_compatibility = False
     _current_temperature = None
@@ -145,6 +127,9 @@ class VirtualThermostat(BaseEntity, ClimateEntity):
             self._attr_target_temperature_high = float(
                 trv.attributes.get(ATTR_TEMPERATURE)
             )
+            self._attr_target_temperature_step = float(
+                trv.attributes.get(ATTR_TARGET_TEMP_STEP)
+            )
         else:
             self._attr_target_temperature = None
             self._attr_current_temperature = None
@@ -154,6 +139,7 @@ class VirtualThermostat(BaseEntity, ClimateEntity):
             self._attr_target_temperature = None
             self._attr_target_temperature_low = None
             self._attr_target_temperature_high = None
+            self._attr_target_temperature_step = None
         _LOGGER.debug("Update called")
         # self.async_write_ha_state()
 

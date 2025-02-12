@@ -1,7 +1,7 @@
 import logging
 import datetime
 from custom_components.zoned_heating.base_entity import BaseEntity
-
+from . import ZonedHeatingConfigEntry
 from homeassistant.const import (
     STATE_ON,
 )
@@ -10,8 +10,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.entity import ToggleEntity
 
-from homeassistant.config_entries import ConfigEntry
-
 _LOGGER = logging.getLogger(__name__)
 from .const import DOMAIN, DEFAULT_SWITCH_ID
 from .coordinator import ZonedHeatingDataCoordinator
@@ -19,14 +17,14 @@ from .coordinator import ZonedHeatingDataCoordinator
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: ConfigEntry,
+    config_entry: ZonedHeatingConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up switch(es) for zoned heating platform."""
 
-    coordinator: ZonedHeatingDataCoordinator = hass.data[DOMAIN][
-        config_entry.entry_id
-    ].coordinator
+    coordinator: ZonedHeatingDataCoordinator = (
+        config_entry.runtime_data.coordinator
+    )  # hass.data[DOMAIN][config_entry.entry_id]
 
     # Create the binary sensors.
     async_add_entities([ZonedHeaterSwitch(coordinator)])

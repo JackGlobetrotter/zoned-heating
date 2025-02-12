@@ -14,6 +14,8 @@ from .coordinator import ZonedHeatingDataCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
+PLATFORMS = [Platform.CLIMATE, Platform.SWITCH]
+
 
 @dataclass
 class RuntimeData:
@@ -28,7 +30,10 @@ async def async_setup(hass, config):
     return True
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
+type ZonedHeatingConfigEntry = ConfigEntry[RuntimeData]
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ZonedHeatingConfigEntry):
     """Set up Zoned Heating integration from a config entry."""
 
     # _async_import_options_from_data_if_missing(hass, entry)
@@ -36,18 +41,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.data.setdefault(const.DOMAIN, {})
     hass.data[const.DOMAIN][entry.entry_id] = {}
 
-    # Reload entry when its updated.
-    entry.async_on_unload(entry.add_update_listener(async_reload_entry))
-    cancel_update_listener = entry.add_update_listener(_async_update_listener)
-
     coordinator = ZonedHeatingDataCoordinator(hass, entry)
-    hass.data[const.DOMAIN][entry.entry_id] = RuntimeData(
-        coordinator, cancel_update_listener
+    hass.data[const.DOMAIN][entry.entry_id] = coordinator
+
+    await coordinator.async_refresh()  # async_config_entry_first_refresh()
+
+    cancel_update_listener = entry.async_on_unload(
+        entry.add_update_listener(_async_update_listener)
     )
-    await coordinator.async_config_entry_first_refresh()
-    await hass.config_entries.async_forward_entry_setups(
-        entry, [Platform.SWITCH, Platform.CLIMATE]
-    )
+    entry.runtime_data = RuntimeData(coordinator, cancel_update_listener)
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
 
@@ -65,12 +68,14 @@ async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def async_unload_entry(hass, entry):
     """Unload Zoned Heating config entry."""
-    unload_ok = await hass.config_entries.async_unload_platforms(
-        entry,
-        [Platform.SWITCH, Platform.CLIMATE],
-    )
+    # unload_ok = await hass.config_entries.async_unload_platforms(
+    #     entry,
+    #     [Platform.CLIMATE],
+    # )
+    #
+    # if unload_ok:
+    #     hass.data[const.DOMAIN].pop(entry.entry_id)
+    #
+    # return unload_ok
 
-    if unload_ok:
-        hass.data[const.DOMAIN].pop(entry.entry_id)
-
-    return unload_ok
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

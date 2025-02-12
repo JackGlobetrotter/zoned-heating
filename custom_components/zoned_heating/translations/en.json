@@ -35,6 +35,21 @@
         "data": {
           "controller_delay_time": "Controller delay time (in seconds)"
         }
+      },
+      "controller_manual": {
+        "title": "[NOT IMPLEMENTED]",
+        "description": "[NOT IMPLEMENTED]Manual adjust controller settings when zoned heating is inactive",
+        "data": {
+          "controller_manual": "[NOT IMPLEMENTED]Enable manual controller settings"
+        }
+      },
+      "controller_manual_config": {
+        "title": "[NOT IMPLEMENTED]",
+        "description": "[NOT IMPLEMENTED]Manual controller settings when zoned heating is inactive",
+        "data": {
+          "controller_manual_mode": "[NOT IMPLEMENTED]Default Controller Mode",
+          "controller_manual_setpoint": "[NOT IMPLEMENTED]Default Controller Setpoint"
+        }
       }
     }
   }

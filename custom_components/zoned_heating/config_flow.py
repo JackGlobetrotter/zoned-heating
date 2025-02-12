@@ -5,6 +5,9 @@ import logging
 import voluptuous as vol
 
 from homeassistant import config_entries
+
+from homeassistant.components.climate.const import ATTR_HVAC_MODES
+from homeassistant.data_entry_flow import section
 from homeassistant.core import callback
 import homeassistant.helpers.config_validation as cv
 from homeassistant.components.climate import ATTR_MIN_TEMP, ATTR_MAX_TEMP
@@ -48,13 +51,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     def __init__(self, config_entry: config_entries.ConfigEntry):
         """Initialize options flow."""
-        self.config_entry = config_entry
-
         self.controller = None
         self.zones = None
         self.max_setpoint = None
         self.controller_delay_time = None
         self.absolute_mode = None
+        self.controller_manual = None
 
     async def async_step_init(self, user_input=None):
         """Handle options flow."""
@@ -126,7 +128,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         if user_input is not None:
             self.max_setpoint = user_input.get(const.CONF_MAX_SETPOINT)
-            return await self.async_step_controller_delay_time()
+            return await self.async_step_controller_manual()
 
         controller_state = self.hass.states.get(self.controller)
         min_temp = 0
@@ -146,6 +148,79 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     vol.Required(
                         const.CONF_MAX_SETPOINT, default=const.DEFAULT_MAX_SETPOINT
                     ): vol.All(vol.Coerce(int), vol.Range(min=min_temp, max=max_temp))
+                }
+            ),
+        )
+
+    async def async_step_controller_manual(self, user_input=None):
+        """Handle options flow."""
+
+        if user_input is not None:
+            self.controller_manual = user_input.get(const.CONF_CONTROLLER_MANUAL)
+            if self.controller_manual:
+                return await self.async_step_controller_manual_config()
+            else:
+                return await self.async_step_controller_delay_time()
+
+        default = self.config_entry.options.get(const.CONF_CONTROLLER_MANUAL)
+        if not default:
+            default = False
+
+        return self.async_show_form(
+            step_id=const.CONF_CONTROLLER_MANUAL,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        const.CONF_CONTROLLER_MANUAL,
+                        default=const.DEFAULT_CONTROLLER_MANUAL,
+                    ): bool
+                }
+            ),
+        )
+
+    async def async_step_controller_manual_config(self, user_input=None):
+        """Handle options flow."""
+
+        if user_input is not None:
+            self.controller_manual_mode = user_input.get(
+                const.CONF_CONTROLLER_MANUAL_MODE
+            )
+            self.controller_manual_setpoint = user_input.get(
+                const.CONF_CONTROLLER_MANUAL_SETPOINT
+            )
+            return await self.async_step_controller_delay_time()
+
+        controller_state = self.hass.states.get(self.controller)
+        min_temp = 0
+        max_temp = 100
+        if self.controller.startswith(Platform.CLIMATE):
+            min_temp = round(controller_state.attributes.get(ATTR_MIN_TEMP))
+            max_temp = round(controller_state.attributes.get(ATTR_MAX_TEMP))
+
+        default = self.config_entry.options.get(const.CONF_MAX_SETPOINT)
+        if not default or default < min_temp or default > max_temp:
+            default = round((min_temp + max_temp) / 2)
+
+        hvac_modes = []
+        hvac_modes = controller_state.attributes.get(ATTR_HVAC_MODES)
+        if not hvac_modes:
+            hvac_modes = ["heat"]
+
+        return self.async_show_form(
+            step_id=const.CONF_CONTROLLER_MANUAL_CONFIG,
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        const.CONF_CONTROLLER_MANUAL_MODE,
+                        default=const.DEFAULT_CONTROLLER_MODE,
+                    ): vol.In(hvac_modes),
+                    vol.Required(
+                        const.CONF_CONTROLLER_MANUAL_SETPOINT,
+                        default=const.DEFAULT_CONTROLLER_SETPOINT,
+                    ): vol.All(
+                        vol.Coerce(int),
+                        vol.Range(min_temp, max_temp),
+                    ),
                 }
             ),
         )
